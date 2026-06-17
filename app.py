@@ -9,6 +9,13 @@ from scoring import (
     get_radar_chart_data,
     min_max_normalize
 )
+from insights import (
+    generate_ranking_insights,
+    generate_trend_insights,
+    generate_high_risk_insights,
+    generate_mixed_category_insights,
+    generate_score_insights
+)
 
 st.set_page_config(
     page_title="城市垃圾分类成效分析看板",
@@ -251,6 +258,17 @@ with tab1:
     )
     fig_pie.update_traces(textinfo='percent+label')
     st.plotly_chart(fig_pie, use_container_width=True)
+    
+    ranking_insights = generate_ranking_insights(subdistrict_accuracy, subdistrict_participation, waste_totals)
+    
+    with st.expander("📝 排名解读", expanded=True):
+        col_ins1, col_ins2, col_ins3 = st.columns(3)
+        with col_ins1:
+            st.info(ranking_insights['accuracy'])
+        with col_ins2:
+            st.info(ranking_insights['participation'])
+        with col_ins3:
+            st.info(ranking_insights['waste_distribution'])
 
 with tab2:
     st.subheader("📈 月度趋势分析")
@@ -377,6 +395,17 @@ with tab2:
             "月均混投量",
             f"{avg_mixed:,.0f} kg"
         )
+    
+    trend_insights = generate_trend_insights(monthly_trend)
+    
+    with st.expander("📝 趋势解读", expanded=True):
+        col_tins1, col_tins2, col_tins3 = st.columns(3)
+        with col_tins1:
+            st.info(trend_insights['accuracy_trend'])
+        with col_tins2:
+            st.info(trend_insights['recent_change'])
+        with col_tins3:
+            st.info(trend_insights['mixed_trend'])
 
 with tab3:
     st.subheader("🏘️ 混投高发小区预警")
@@ -429,6 +458,17 @@ with tab3:
         st.plotly_chart(fig_risk, use_container_width=True)
     else:
         st.success("🎉 太棒了！当前筛选条件下没有高风险小区！")
+    
+    high_risk_insights = generate_high_risk_insights(community_stats, mixed_threshold)
+    
+    with st.expander("📝 混投风险解读", expanded=True):
+        col_rins1, col_rins2, col_rins3 = st.columns(3)
+        with col_rins1:
+            st.warning(high_risk_insights['high_risk_count'])
+        with col_rins2:
+            st.warning(high_risk_insights['worst_communities'])
+        with col_rins3:
+            st.info(high_risk_insights['subdistrict_distribution'])
 
 with tab4:
     st.subheader("🥡 混投品类分析")
@@ -571,6 +611,19 @@ with tab4:
         height=400
     )
     st.plotly_chart(fig_mix3, use_container_width=True)
+    
+    mixed_cat_insights = generate_mixed_category_insights(
+        kitchen_mixed, plastic_in_kitchen, paper_in_kitchen, glass_in_kitchen, other_mixed
+    )
+    
+    with st.expander("📝 混投品类解读", expanded=True):
+        col_cins1, col_cins2, col_cins3 = st.columns(3)
+        with col_cins1:
+            st.info(mixed_cat_insights['main_category'])
+        with col_cins2:
+            st.info(mixed_cat_insights['kitchen_mixed_ratio'])
+        with col_cins3:
+            st.success(mixed_cat_insights['improvement_suggestion'])
 
 with tab5:
     st.subheader("🏆 各街道综合评分")
@@ -727,6 +780,25 @@ with tab5:
         height=450
     )
     st.plotly_chart(fig_total, use_container_width=True)
+    
+    score_insights = generate_score_insights(
+        sub_score,
+        weights_all_zero,
+        w_accuracy_norm,
+        w_participation_norm,
+        w_mixed_control_norm,
+        w_reduction_norm
+    )
+    
+    with st.expander("📝 综合评分解读", expanded=True):
+        col_sins1, col_sins2, col_sins3 = st.columns(3)
+        with col_sins1:
+            st.success(score_insights['champion'])
+        with col_sins2:
+            st.info(score_insights['dimension_analysis'])
+        with col_sins3:
+            if score_insights['overall_assessment']:
+                st.info(score_insights['overall_assessment'])
 
 st.markdown("---")
 st.markdown("💡 **数据说明**：本看板数据为模拟数据，涵盖2025年1月至2026年5月，共8个街道、24个社区的垃圾分类数据。")
