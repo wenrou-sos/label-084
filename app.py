@@ -83,6 +83,21 @@ with st.sidebar:
         value=70,
         help="低于该准确率的小区将被标记为高风险"
     )
+    
+    st.markdown("---")
+    st.header("⚖️ 综合评分权重")
+    w_accuracy = st.slider("分类准确率权重", 0, 100, 40, help="分类准确率在综合评分中的权重占比")
+    w_participation = st.slider("参与率权重", 0, 100, 25, help="居民参与率在综合评分中的权重占比")
+    w_mixed_control = st.slider("混投控制权重", 0, 100, 20, help="混投控制表现（混投率越低分越高）在综合评分中的权重占比")
+    w_reduction = st.slider("垃圾减量权重", 0, 100, 15, help="其他垃圾占比越低分越高，在综合评分中的权重占比")
+    weight_sum = w_accuracy + w_participation + w_mixed_control + w_reduction
+    if weight_sum > 0:
+        w_accuracy_norm = w_accuracy / weight_sum
+        w_participation_norm = w_participation / weight_sum
+        w_mixed_control_norm = w_mixed_control / weight_sum
+        w_reduction_norm = w_reduction / weight_sum
+    else:
+        w_accuracy_norm, w_participation_norm, w_mixed_control_norm, w_reduction_norm = 0.4, 0.25, 0.2, 0.15
 
 start_date = pd.to_datetime(start_date)
 end_date = pd.to_datetime(end_date)
@@ -145,7 +160,7 @@ with col4:
 
 st.markdown("---")
 
-tab1, tab2, tab3, tab4 = st.tabs(["📊 街道成效排名", "📈 月度趋势分析", "🏘️ 混投高发小区", "🥡 混投品类分析"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 街道成效排名", "📈 月度趋势分析", "🏘️ 混投高发小区", "🥡 混投品类分析", "🏆 综合评分"])
 
 with tab1:
     st.subheader("📊 各街道分类成效排名")
@@ -554,6 +569,190 @@ with tab4:
         height=400
     )
     st.plotly_chart(fig_mix3, use_container_width=True)
+
+with tab5:
+    st.subheader("🏆 各街道综合评分")
+    
+    st.markdown("##### 评分维度说明")
+    score_desc_col1, score_desc_col2, score_desc_col3, score_desc_col4 = st.columns(4)
+    with score_desc_col1:
+        st.info("🎯 **分类准确率**\n\n准确分类的垃圾占总垃圾的比例，越高越好")
+    with score_desc_col2:
+        st.info("👥 **参与率**\n\n每日去投放站点投递的户数占总户数的比例，越高越好")
+    with score_desc_col3:
+        st.info("🚫 **混投控制**\n\n混投率越低得分越高，反映居民分类规范性")
+    with score_desc_col4:
+        st.info("📉 **垃圾减量**\n\n其他垃圾占比越低得分越高，反映源头减量效果")
+    
+    sub_score = filtered_df.groupby('街道').agg({
+        '分类准确率': 'mean',
+        '参与率': 'mean',
+        '混投总量(kg)': 'sum',
+        '厨余垃圾量(kg)': 'sum',
+        '可回收物量(kg)': 'sum',
+        '有害垃圾量(kg)': 'sum',
+        '其他垃圾量(kg)': 'sum'
+    }).reset_index()
+    
+    sub_score['总垃圾量(kg)'] = (sub_score['厨余垃圾量(kg)'] + sub_score['可回收物量(kg)'] + sub_score['有害垃圾量(kg)'] + sub_score['其他垃圾量(kg)'])
+    sub_score['混投率'] = sub_score['混投总量(kg)'] / sub_score['总垃圾量(kg)']
+    sub_score['其他垃圾占比'] = sub_score['其他垃圾量(kg)'] / sub_score['总垃圾量(kg)']
+    
+    score_min_acc = sub_score['分类准确率'].min()
+    score_max_acc = sub_score['分类准确率'].max()
+    score_min_par = sub_score['参与率'].min()
+    score_max_par = sub_score['参与率'].max()
+    score_min_mix = sub_score['混投率'].min()
+    score_max_mix = sub_score['混投率'].max()
+    score_min_red = sub_score['其他垃圾占比'].min()
+    score_max_red = sub_score['其他垃圾占比'].max()
+    
+    def normalize(val, vmin, vmax):
+        if vmax == vmin:
+            return 50.0
+        return (val - vmin) / (vmax - vmin) * 100
+    
+    sub_score['分类准确率得分'] = sub_score['分类准确率'].apply(lambda x: normalize(x, score_min_acc, score_max_acc))
+    sub_score['参与率得分'] = sub_score['参与率'].apply(lambda x: normalize(x, score_min_par, score_max_par))
+    sub_score['混投控制得分'] = sub_score['混投率'].apply(lambda x: normalize(x, score_max_mix, score_min_mix))
+    sub_score['垃圾减量得分'] = sub_score['其他垃圾占比'].apply(lambda x: normalize(x, score_max_red, score_min_red))
+    
+    sub_score['综合得分'] = (
+        sub_score['分类准确率得分'] * w_accuracy_norm +
+        sub_score['参与率得分'] * w_participation_norm +
+        sub_score['混投控制得分'] * w_mixed_control_norm +
+        sub_score['垃圾减量得分'] * w_reduction_norm
+    )
+    sub_score = sub_score.sort_values('综合得分', ascending=False).reset_index(drop=True)
+    sub_score['排名'] = range(1, len(sub_score) + 1)
+    
+    st.markdown(f"**当前权重配置**：分类准确率 {w_accuracy_norm*100:.1f}% ｜ 参与率 {w_participation_norm*100:.1f}% ｜ 混投控制 {w_mixed_control_norm*100:.1f}% ｜ 垃圾减量 {w_reduction_norm*100:.1f}%")
+    
+    col_radar, col_rank = st.columns([1, 1])
+    
+    with col_radar:
+        st.markdown("#### 🕸️ 各街道评分雷达图")
+        categories = ['分类准确率', '参与率', '混投控制', '垃圾减量']
+        
+        colors_radar = [
+            '#2ecc71', '#3498db', '#e74c3c', '#f39c12', '#9b59b6',
+            '#1abc9c', '#e67e22', '#34495e'
+        ]
+        
+        fig_radar = go.Figure()
+        for idx, row in sub_score.iterrows():
+            values = [
+                row['分类准确率得分'],
+                row['参与率得分'],
+                row['混投控制得分'],
+                row['垃圾减量得分']
+            ]
+            values_closed = values + [values[0]]
+            categories_closed = categories + [categories[0]]
+            fig_radar.add_trace(go.Scatterpolar(
+                r=values_closed,
+                theta=categories_closed,
+                fill='toself',
+                name=row['街道'],
+                opacity=0.25,
+                line=dict(color=colors_radar[idx % len(colors_radar)], width=2)
+            ))
+        
+        fig_radar.update_layout(
+            polar=dict(
+                radialaxis=dict(
+                    visible=True,
+                    range=[0, 100],
+                    tickfont=dict(size=10)
+                )
+            ),
+            showlegend=True,
+            legend=dict(orientation='h', y=-0.15, font=dict(size=10)),
+            height=550,
+            margin=dict(l=40, r=40, t=30, b=60)
+        )
+        st.plotly_chart(fig_radar, use_container_width=True)
+    
+    with col_rank:
+        st.markdown("#### 🏅 综合得分排行榜")
+        display_score = sub_score[['排名', '街道', '分类准确率得分', '参与率得分', '混投控制得分', '垃圾减量得分', '综合得分']].copy()
+        display_score = display_score.round(1)
+        display_score.columns = ['排名', '街道', '分类准确率', '参与率', '混投控制', '垃圾减量', '综合得分']
+        
+        def highlight_top3(df):
+            styles = pd.DataFrame('', index=df.index, columns=df.columns)
+            for i in range(min(3, len(df))):
+                if i == 0:
+                    styles.iloc[i] = 'background-color: #ffd700; color: #333; font-weight: bold'
+                elif i == 1:
+                    styles.iloc[i] = 'background-color: #c0c0c0; color: #333; font-weight: bold'
+                elif i == 2:
+                    styles.iloc[i] = 'background-color: #cd7f32; color: #fff; font-weight: bold'
+            return styles
+        
+        st.dataframe(
+            display_score.style.apply(highlight_top3, axis=None),
+            use_container_width=True,
+            height=450,
+            hide_index=True
+        )
+    
+    st.markdown("#### 📊 各维度得分对比")
+    score_melted = sub_score.melt(
+        id_vars=['街道'],
+        value_vars=['分类准确率得分', '参与率得分', '混投控制得分', '垃圾减量得分'],
+        var_name='维度',
+        value_name='得分'
+    )
+    score_melted['维度'] = score_melted['维度'].str.replace('得分', '')
+    
+    fig_dim_bar = px.bar(
+        score_melted,
+        x='街道',
+        y='得分',
+        color='维度',
+        barmode='group',
+        color_discrete_map={
+            '分类准确率': '#27ae60',
+            '参与率': '#3498db',
+            '混投控制': '#e74c3c',
+            '垃圾减量': '#f39c12'
+        },
+        title='各街道各维度得分对比'
+    )
+    fig_dim_bar.update_layout(yaxis=dict(range=[0, 110]), height=400)
+    st.plotly_chart(fig_dim_bar, use_container_width=True)
+    
+    st.markdown("#### 📈 综合得分排名柱状图")
+    sub_score_sorted_asc = sub_score.sort_values('综合得分', ascending=True)
+    
+    bar_colors = []
+    for rank in sub_score_sorted_asc['排名']:
+        if rank == 1:
+            bar_colors.append('#ffd700')
+        elif rank == 2:
+            bar_colors.append('#c0c0c0')
+        elif rank == 3:
+            bar_colors.append('#cd7f32')
+        else:
+            bar_colors.append('#3498db')
+    
+    fig_total = go.Figure(go.Bar(
+        x=sub_score_sorted_asc['综合得分'],
+        y=sub_score_sorted_asc['街道'],
+        orientation='h',
+        marker=dict(color=bar_colors),
+        text=sub_score_sorted_asc['综合得分'].round(1).astype(str) + '分',
+        textposition='auto'
+    ))
+    fig_total.update_layout(
+        title='各街道综合得分排名（金🥇 银🥈 铜🥉）',
+        xaxis_title='综合得分',
+        yaxis_title='街道',
+        xaxis=dict(range=[0, 110]),
+        height=450
+    )
+    st.plotly_chart(fig_total, use_container_width=True)
 
 st.markdown("---")
 st.markdown("💡 **数据说明**：本看板数据为模拟数据，涵盖2025年1月至2026年5月，共8个街道、24个社区的垃圾分类数据。")
