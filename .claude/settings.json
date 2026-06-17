@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Set-Content -Path record.json -Value '{ *)",
+      "PowerShell(curl.exe -X POST \"http://192.168.10.43:38427/api/records\" -H \"Content-Type: application/json; charset=utf-8\" --data-binary \"@d:\\\\proje\\\\label-084\\\\record.json\")"
+    ]
+  }
+}

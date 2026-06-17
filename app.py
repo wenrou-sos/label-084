@@ -93,6 +93,10 @@ filtered_df = df[
     (df['街道'].isin(selected_subdistricts))
 ]
 
+if len(filtered_df) == 0:
+    st.warning("⚠️ 当前筛选条件下无数据，请调整日期范围或选择更多街道后重试。")
+    st.stop()
+
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
@@ -234,8 +238,8 @@ with tab1:
 with tab2:
     st.subheader("📈 月度趋势分析")
     
-    filtered_df['年月'] = filtered_df['日期'].dt.to_period('M').astype(str)
-    monthly_trend = filtered_df.groupby('年月').agg({
+    monthly_trend = filtered_df.assign(年月=filtered_df['日期'].dt.to_period('M').astype(str))
+    monthly_trend = monthly_trend.groupby('年月').agg({
         '分类准确率': 'mean',
         '参与率': 'mean',
         '厨余垃圾量(kg)': 'sum',
@@ -323,9 +327,18 @@ with tab2:
         st.plotly_chart(fig5, use_container_width=True)
     
     st.markdown("#### 趋势分析总结")
-    first_accuracy = monthly_trend['分类准确率'].iloc[0]
-    last_accuracy = monthly_trend['分类准确率'].iloc[-1]
-    accuracy_change = last_accuracy - first_accuracy
+    if len(monthly_trend) >= 2:
+        first_accuracy = monthly_trend['分类准确率'].iloc[0]
+        last_accuracy = monthly_trend['分类准确率'].iloc[-1]
+        accuracy_change = last_accuracy - first_accuracy
+    elif len(monthly_trend) == 1:
+        first_accuracy = monthly_trend['分类准确率'].iloc[0]
+        last_accuracy = first_accuracy
+        accuracy_change = 0
+    else:
+        first_accuracy = 0
+        last_accuracy = 0
+        accuracy_change = 0
     
     col_sum1, col_sum2, col_sum3 = st.columns(3)
     with col_sum1:
@@ -403,29 +416,13 @@ with tab3:
 with tab4:
     st.subheader("🥡 混投品类分析")
     
-    st.markdown("#### 混投主要品类分布")
-    mixed_analysis = filtered_df.agg({
-        '混投塑料瓶(kg)': 'sum',
-        '混投纸张(kg)': 'sum',
-        '混投玻璃(kg)': 'sum',
-        '其他混投量(kg)': 'sum',
-        '厨余袋中混投量(kg)': 'sum'
-    }).reset_index()
-    mixed_analysis.columns = ['混投品类', '重量(kg)']
-    
-    label_map = {
-        '混投塑料瓶(kg)': '塑料瓶',
-        '混投纸张(kg)': '纸张',
-        '混投玻璃(kg)': '玻璃',
-        '其他混投量(kg)': '其他混投',
-        '厨余袋中混投量(kg)': '厨余袋内混投'
-    }
-    mixed_analysis['混投品类'] = mixed_analysis['混投品类'].map(label_map)
-    
     kitchen_mixed = filtered_df['厨余袋中混投量(kg)'].sum()
+    other_mixed = filtered_df['其他混投量(kg)'].sum()
     plastic_in_kitchen = filtered_df['混投塑料瓶(kg)'].sum()
     paper_in_kitchen = filtered_df['混投纸张(kg)'].sum()
     glass_in_kitchen = filtered_df['混投玻璃(kg)'].sum()
+    other_in_kitchen = kitchen_mixed - plastic_in_kitchen - paper_in_kitchen - glass_in_kitchen
+    total_mixed = kitchen_mixed + other_mixed
     
     col_m1, col_m2, col_m3, col_m4 = st.columns(4)
     with col_m1:
@@ -435,18 +432,43 @@ with tab4:
     with col_m3:
         st.metric("玻璃混投", f"{glass_in_kitchen:,.0f} kg")
     with col_m4:
-        st.metric("厨余袋总混投", f"{kitchen_mixed:,.0f} kg")
+        st.metric("总混投量", f"{total_mixed:,.0f} kg")
+    
+    st.markdown("#### 混投主要品类分布")
     
     col_ana1, col_ana2 = st.columns(2)
     
     with col_ana1:
+        all_mixed_detail = pd.DataFrame({
+            '品类': ['厨余袋-塑料瓶', '厨余袋-纸张', '厨余袋-玻璃', '厨余袋-其他', '非厨余袋混投'],
+            '重量(kg)': [
+                plastic_in_kitchen,
+                paper_in_kitchen,
+                glass_in_kitchen,
+                max(other_in_kitchen, 0),
+                other_mixed
+            ]
+        })
+        
+        fig_mix_overall = px.pie(
+            all_mixed_detail,
+            values='重量(kg)',
+            names='品类',
+            color_discrete_sequence=['#e74c3c', '#f39c12', '#3498db', '#95a5a6', '#8e44ad'],
+            title='全部混投品类分布（互斥）',
+            hole=0.4
+        )
+        fig_mix_overall.update_traces(textinfo='percent+label')
+        st.plotly_chart(fig_mix_overall, use_container_width=True)
+    
+    with col_ana2:
         kitchen_mixed_detail = pd.DataFrame({
             '品类': ['塑料瓶', '纸张', '玻璃', '其他'],
             '重量(kg)': [
                 plastic_in_kitchen,
                 paper_in_kitchen,
                 glass_in_kitchen,
-                kitchen_mixed - plastic_in_kitchen - paper_in_kitchen - glass_in_kitchen
+                max(other_in_kitchen, 0)
             ]
         })
         
@@ -461,44 +483,44 @@ with tab4:
         fig_mix1.update_traces(textinfo='percent+label')
         st.plotly_chart(fig_mix1, use_container_width=True)
     
-    with col_ana2:
-        subdistrict_mixed = filtered_df.groupby('街道').agg({
-            '混投塑料瓶(kg)': 'sum',
-            '混投纸张(kg)': 'sum',
-            '混投玻璃(kg)': 'sum'
-        }).reset_index()
-        subdistrict_mixed.columns = ['街道', '塑料瓶', '纸张', '玻璃']
-        
-        fig_mix2 = go.Figure()
-        fig_mix2.add_trace(go.Bar(
-            x=subdistrict_mixed['街道'],
-            y=subdistrict_mixed['塑料瓶'],
-            name='塑料瓶',
-            marker_color='#e74c3c'
-        ))
-        fig_mix2.add_trace(go.Bar(
-            x=subdistrict_mixed['街道'],
-            y=subdistrict_mixed['纸张'],
-            name='纸张',
-            marker_color='#f39c12'
-        ))
-        fig_mix2.add_trace(go.Bar(
-            x=subdistrict_mixed['街道'],
-            y=subdistrict_mixed['玻璃'],
-            name='玻璃',
-            marker_color='#3498db'
-        ))
-        fig_mix2.update_layout(
-            title='各街道混投品类对比',
-            barmode='stack',
-            yaxis_title='混投重量 (kg)',
-            height=500
-        )
-        st.plotly_chart(fig_mix2, use_container_width=True)
+    st.markdown("#### 各街道混投品类对比")
+    subdistrict_mixed = filtered_df.groupby('街道').agg({
+        '混投塑料瓶(kg)': 'sum',
+        '混投纸张(kg)': 'sum',
+        '混投玻璃(kg)': 'sum'
+    }).reset_index()
+    subdistrict_mixed.columns = ['街道', '塑料瓶', '纸张', '玻璃']
+    
+    fig_mix2 = go.Figure()
+    fig_mix2.add_trace(go.Bar(
+        x=subdistrict_mixed['街道'],
+        y=subdistrict_mixed['塑料瓶'],
+        name='塑料瓶',
+        marker_color='#e74c3c'
+    ))
+    fig_mix2.add_trace(go.Bar(
+        x=subdistrict_mixed['街道'],
+        y=subdistrict_mixed['纸张'],
+        name='纸张',
+        marker_color='#f39c12'
+    ))
+    fig_mix2.add_trace(go.Bar(
+        x=subdistrict_mixed['街道'],
+        y=subdistrict_mixed['玻璃'],
+        name='玻璃',
+        marker_color='#3498db'
+    ))
+    fig_mix2.update_layout(
+        title='各街道混投品类对比（堆叠）',
+        barmode='stack',
+        yaxis_title='混投重量 (kg)',
+        height=450
+    )
+    st.plotly_chart(fig_mix2, use_container_width=True)
     
     st.markdown("#### 混投品类月度趋势")
-    filtered_df['年月'] = filtered_df['日期'].dt.to_period('M').astype(str)
-    monthly_mixed = filtered_df.groupby('年月').agg({
+    monthly_mixed = filtered_df.assign(年月=filtered_df['日期'].dt.to_period('M').astype(str))
+    monthly_mixed = monthly_mixed.groupby('年月').agg({
         '混投塑料瓶(kg)': 'sum',
         '混投纸张(kg)': 'sum',
         '混投玻璃(kg)': 'sum'
